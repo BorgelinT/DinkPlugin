@@ -25,6 +25,10 @@ dependencies {
     compileOnly(group = "org.jetbrains", name = "annotations", version = "23.0.0")
     testCompileOnly(group = "org.jetbrains", name = "annotations", version = "23.0.0")
 
+    // add pure java video encoder for recording clips
+    implementation(group = "org.jcodec", name = "jcodec", version = "0.2.5")
+    implementation(group = "org.jcodec", name = "jcodec-javase", version = "0.2.5")
+
     val runeLiteVersion = "latest." + if (project.hasProperty("use.snapshot")) "integration" else "release"
     compileOnly(group = "net.runelite", name = "client", version = runeLiteVersion)
     testImplementation(group = "net.runelite", name = "client", version = runeLiteVersion)

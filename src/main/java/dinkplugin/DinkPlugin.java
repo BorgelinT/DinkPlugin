@@ -1,6 +1,7 @@
 package dinkplugin;
 
 import com.google.inject.Provides;
+import dinkplugin.message.DiscordMessageHandler;
 import dinkplugin.notifiers.ChatNotifier;
 import dinkplugin.notifiers.ClueNotifier;
 import dinkplugin.notifiers.CollectionNotifier;
@@ -22,6 +23,7 @@ import dinkplugin.notifiers.SlayerNotifier;
 import dinkplugin.notifiers.SpeedrunNotifier;
 import dinkplugin.notifiers.TradeNotifier;
 import dinkplugin.util.AccountTypeTracker;
+import dinkplugin.util.ClipManager;
 import dinkplugin.util.KillCountService;
 import dinkplugin.util.Utils;
 import dinkplugin.util.WorldTypeTracker;
@@ -85,6 +87,8 @@ public class DinkPlugin extends Plugin {
     private @Inject WorldTypeTracker worldTracker;
 
     private @Inject KillCountService killCountService;
+    private @Inject ClipManager clipManager;
+    private @Inject DiscordMessageHandler messageHandler;
 
     private @Inject CollectionNotifier collectionNotifier;
     private @Inject PetNotifier petNotifier;
@@ -133,12 +137,14 @@ public class DinkPlugin extends Plugin {
         lootNotifier.init();
         deathNotifier.init();
         chatNotifier.init();
+        clipManager.start();
         // leaguesNotifier.init();
     }
 
     @Override
     protected void shutDown() {
         log.debug("Shutting down Dink");
+        clipManager.stop();
         this.resetNotifiers();
         gameState.lazySet(null);
         accountTracker.clear();
@@ -175,6 +181,7 @@ public class DinkPlugin extends Plugin {
     public void onCommandExecuted(CommandExecuted event) {
         settingsManager.onCommand(event);
         chatNotifier.onCommand(event);
+        clipManager.onCommand(event.getCommand(), this, messageHandler);
     }
 
     @Subscribe
@@ -189,6 +196,7 @@ public class DinkPlugin extends Plugin {
         lootNotifier.onConfigChanged(event.getKey(), event.getNewValue());
         deathNotifier.onConfigChanged(event.getKey(), event.getNewValue());
         chatNotifier.onConfig(event.getKey());
+        clipManager.onConfigChanged(event.getKey());
 
         if ("false".equals(event.getNewValue())) {
             Runnable task = configDisabledTasks.get(event.getKey());

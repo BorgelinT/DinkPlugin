@@ -8,6 +8,7 @@ import dinkplugin.domain.SeasonalPolicy;
 import dinkplugin.message.templating.Replacements;
 import dinkplugin.message.templating.Template;
 import dinkplugin.notifiers.data.NotificationData;
+import dinkplugin.util.ClipManager;
 import dinkplugin.util.ConfigProxyAuth;
 import dinkplugin.util.ConfigProxyServer;
 import dinkplugin.util.ConfigUtil;
@@ -84,10 +85,11 @@ public class DiscordMessageHandler {
     private final ClientThread clientThread;
     private final DiscordService discordService;
     private final ImageCapture imageCapture;
+    private final ClipManager clipManager;
 
     @Inject
     @VisibleForTesting
-    public DiscordMessageHandler(Gson gson, Client client, DrawManager drawManager, OkHttpClient httpClient, DinkPluginConfig config, ScheduledExecutorService executor, ClientThread clientThread, DiscordService discordService, ImageCapture imageCapture) {
+    public DiscordMessageHandler(Gson gson, Client client, DrawManager drawManager, OkHttpClient httpClient, DinkPluginConfig config, ScheduledExecutorService executor, ClientThread clientThread, DiscordService discordService, ImageCapture imageCapture, ClipManager clipManager) {
         this.gson = gson;
         this.client = client;
         this.drawManager = drawManager;
@@ -96,6 +98,7 @@ public class DiscordMessageHandler {
         this.clientThread = clientThread;
         this.discordService = discordService;
         this.imageCapture = imageCapture;
+        this.clipManager = clipManager;
         this.httpClient = httpClient.newBuilder()
             .addInterceptor(chain -> {
                 Request request = chain.request().newBuilder()
@@ -104,8 +107,8 @@ public class DiscordMessageHandler {
                 Interceptor.Chain updatedChain = chain
                     .withConnectTimeout(config.networkTimeout(), TimeUnit.SECONDS)
                     .withReadTimeout(config.networkTimeout(), TimeUnit.SECONDS);
-                // Allow longer timeout when writing a screenshot file to overcome slow internet speeds
-                if (request.body() instanceof MultipartBody && Utils.hasImage((MultipartBody) request.body())) {
+                // Allow longer timeout when writing media files to overcome slow internet speeds
+                if (request.body() instanceof MultipartBody && Utils.hasMedia((MultipartBody) request.body())) {
                     updatedChain = chain.withWriteTimeout(Math.max(config.imageWriteTimeout(), 0), TimeUnit.SECONDS);
                 }
                 return updatedChain.proceed(request);
@@ -135,6 +138,10 @@ public class DiscordMessageHandler {
     }
 
     public void createMessage(String webhookUrl, boolean sendImage, @NonNull NotificationBody<?> inputBody) {
+        createMessage(webhookUrl, sendImage, inputBody, null);
+    }
+
+    public void createMessage(String webhookUrl, boolean sendImage, @NonNull NotificationBody<?> inputBody, @Nullable byte[] preClipData) {
         if (StringUtils.isBlank(webhookUrl)) return;
 
         Collection<HttpUrl> urlList = Arrays.stream(StringUtils.split(webhookUrl, '\n'))
@@ -146,30 +153,56 @@ public class DiscordMessageHandler {
         if (urlList.isEmpty()) return;
 
         NotificationBody<?> mBody = enrichBody(inputBody, sendImage);
-        if (sendImage) {
-            // optionally hide chat for privacy in screenshot
-            captureScreenshot(config.screenshotScale() / 100.0, mBody.getScreenshotOverride())
-                .thenApply(image ->
-                    RequestBody.create(MediaType.parse("image/" + image.getKey()), image.getValue())
-                )
+        boolean sendClip = preClipData != null || clipManager.shouldSendClip(mBody);
+
+        if (sendClip) { 
+            // Clip replaces the screenshot when available, but we still fall back to the image path if clip encoding fails.
+            CompletableFuture<byte[]> clipFuture = preClipData != null
+                ? CompletableFuture.completedFuture(preClipData)
+                : clipManager.requestClip();
+            NotificationBody<?> body = mBody;
+            clipFuture
                 .exceptionally(e -> {
-                    log.warn("There was an error creating bytes from captured image", e);
+                    log.warn("There was an error creating clip data", e);
                     return null;
                 })
-                .thenAccept(image -> sendToMultiple(urlList, mBody, image));
+                .thenAccept(clipData -> {
+                    if (clipData != null) {
+                        sendToMultiple(urlList, body, null, clipData);
+                    } else if (sendImage) {
+                        sendImageMessage(urlList, body);
+                    } else {
+                        sendToMultiple(urlList, body, null, null);
+                    }
+                });
+        } else if (sendImage) {
+            sendImageMessage(urlList, mBody);
         } else {
-            sendToMultiple(urlList, mBody, null);
+            sendToMultiple(urlList, mBody, null, null);
         }
     }
 
-    private void sendToMultiple(Collection<HttpUrl> urls, NotificationBody<?> body, @Nullable RequestBody image) {
+    private void sendImageMessage(Collection<HttpUrl> urlList, NotificationBody<?> body) {
+        captureScreenshot(config.screenshotScale() / 100.0, body.getScreenshotOverride())
+            .thenApply(image ->
+                RequestBody.create(MediaType.parse("image/" + image.getKey()), image.getValue())
+            )
+            .exceptionally(e -> {
+                log.warn("There was an error creating bytes from captured image", e);
+                return null;
+            })
+            .thenAccept(image -> sendToMultiple(urlList, body, image, null));
+    }
+
+    private void sendToMultiple(Collection<HttpUrl> urls, NotificationBody<?> body, @Nullable RequestBody image, @Nullable byte[] clipData) {
         urls.forEach(url -> {
             RequestBody img = image == null || NO_IMAGE_ENDPOINTS.contains(url.host()) ? null : image;
-            executor.execute(() -> sendMessage(url, injectThreadName(url, body, false), img, 0));
+            byte[] clip = NO_IMAGE_ENDPOINTS.contains(url.host()) ? null : clipData;
+            executor.execute(() -> sendMessage(url, injectThreadName(url, body, false), img, clip, 0));
         });
     }
 
-    private void sendMessage(HttpUrl url, NotificationBody<?> mBody, @Nullable RequestBody image, int attempt) {
+    private void sendMessage(HttpUrl url, NotificationBody<?> mBody, @Nullable RequestBody image, @Nullable byte[] clipData, int attempt) {
         BiConsumer<NotificationBody<?>, Throwable> retry = (body, e) -> {
             log.trace(String.format("Failed to send webhook message to %s on attempt %d", url, attempt), e);
 
@@ -182,7 +215,7 @@ public class DiscordMessageHandler {
                 long baseDelay = config.baseRetryDelay();
                 if (baseDelay > 0) {
                     long delay = baseDelay * (1L << Math.min(attempt, 16)); // exponential backoff
-                    executor.schedule(() -> sendMessage(url, body, image, attempt + 1), delay, TimeUnit.MILLISECONDS);
+                    executor.schedule(() -> sendMessage(url, body, image, clipData, attempt + 1), delay, TimeUnit.MILLISECONDS);
                     log.debug("Scheduled webhook message for retry in {} milliseconds", delay);
                 } else {
                     log.debug("Skipping retry attempts for failed webhook since base delay is not positive");
@@ -196,7 +229,7 @@ public class DiscordMessageHandler {
 
         Request request = new Request.Builder()
             .url(url)
-            .post(createBody(mBody, image))
+            .post(createBody(mBody, image, clipData))
             .build();
 
         httpClient.newCall(request).enqueue(new Callback() {
@@ -336,16 +369,21 @@ public class DiscordMessageHandler {
         return mBody;
     }
 
-    private RequestBody createBody(NotificationBody<?> mBody, @Nullable RequestBody image) {
+    private RequestBody createBody(NotificationBody<?> mBody, @Nullable RequestBody image, @Nullable byte[] clipData) {
         String payload = gson.toJson(mBody);
 
-        if (image != null) {
-            String screenshotFileName = computeScreenshotName(config.screenshotFilenameTemplate(), mBody);
-            return new MultipartBody.Builder()
+        if (image != null || clipData != null) {
+            MultipartBody.Builder builder = new MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("payload_json", payload)
-                .addFormDataPart("file", screenshotFileName, image)
-                .build();
+                .addFormDataPart("payload_json", payload);
+            if (image != null) {
+                String screenshotFileName = computeScreenshotName(config.screenshotFilenameTemplate(), mBody);
+                builder.addFormDataPart("file", screenshotFileName, image);
+            }
+            if (clipData != null) {
+                builder.addFormDataPart("file2", "clip.mp4", RequestBody.create(MediaType.parse("video/mp4"), clipData));
+            }
+            return builder.build();
         }
 
         return RequestBody.create(JSON, payload);

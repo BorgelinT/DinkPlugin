@@ -201,6 +201,14 @@ public interface DinkPluginConfig extends Config {
     String leaguesSection = "Leagues";
 
     @ConfigSection(
+        name = "Video Clips",
+        description = "Record short video clips in place of screenshots",
+        position = 990,
+        closedByDefault = true
+    )
+    String clipSection = "Video Clips";
+
+    @ConfigSection(
         name = "Advanced",
         description = "Do not modify without fully understanding these settings",
         position = 1000,
@@ -216,6 +224,99 @@ public interface DinkPluginConfig extends Config {
     )
     default String pluginVersion() {
         return "";
+    }
+
+    @ConfigItem(
+        keyName = "clipEnabled",
+        name = "Enable Clip Recording",
+        description = "Continuously capture frames so video clips can be sent with notifications",
+        position = 990,
+        section = clipSection
+    )
+    default boolean clipEnabled() {
+        return false;
+    }
+
+    @ConfigItem(
+        keyName = "clipFps",
+        name = "Clip FPS",
+        description = "Frames per second for clip recording. Lower values produce smaller files",
+        position = 991,
+        section = clipSection
+    )
+    @Range(min = 10, max = 30)
+    default int clipFps() {
+        return 20;
+    }
+
+    @ConfigItem(
+        keyName = "clipDurationPre",
+        name = "Pre-event Duration",
+        description = "Seconds of footage to keep from before the event. Set to 0 for post-event only",
+        position = 992,
+        section = clipSection
+    )
+    @Range(min = 0, max = 10)
+    @Units(Units.SECONDS)
+    default int clipDurationPre() {
+        return 3;
+    }
+
+    @ConfigItem(
+        keyName = "clipDurationPost",
+        name = "Post-event Duration",
+        description = "Seconds of footage to capture after the event",
+        position = 993,
+        section = clipSection
+    )
+    @Range(min = 2, max = 5)
+    @Units(Units.SECONDS)
+    default int clipDurationPost() {
+        return 2;
+    }
+
+    @ConfigItem(
+        keyName = "lootClipMinValue",
+        name = "Loot Clip Threshold",
+        description = "Minimum loot value to send a clip. Set to 0 to always send clips for loot. Set to -1 to disable loot clips",
+        position = 994,
+        section = clipSection
+    )
+    default int lootClipMinValue() {
+        return -1;
+    }
+
+    @ConfigItem(
+        keyName = "deathSendClip",
+        name = "Death Clips",
+        description = "Send a video clip with death notifications",
+        position = 995,
+        section = clipSection
+    )
+    default boolean deathSendClip() {
+        return false;
+    }
+
+    @ConfigItem(
+        keyName = "petSendClip",
+        name = "Pet Clips",
+        description = "Send a video clip with pet notifications",
+        position = 996,
+        section = clipSection
+    )
+    default boolean petSendClip() {
+        return false;
+    }
+
+    @ConfigItem(
+        keyName = "collectionSendClip",
+        name = "Collection Log Clips",
+        description = "Send a video clip with collection log notifications",
+        position = 997,
+        section = clipSection
+    )
+    default boolean collectionSendClip() {
+        return false;
     }
 
     @ConfigItem(

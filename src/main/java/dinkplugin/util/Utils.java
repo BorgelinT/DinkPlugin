@@ -336,10 +336,10 @@ public class Utils {
         });
     }
 
-    public boolean hasImage(@NotNull MultipartBody body) {
+    public boolean hasMedia(@NotNull MultipartBody body) {
         return body.parts().stream().anyMatch(part -> {
             MediaType type = part.body().contentType();
-            return type != null && "image".equals(type.type());
+            return type != null && ("image".equals(type.type()) || "video".equals(type.type()));
         });
     }
 

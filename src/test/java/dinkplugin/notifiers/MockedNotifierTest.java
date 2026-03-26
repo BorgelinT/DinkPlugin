@@ -15,6 +15,7 @@ import dinkplugin.message.templating.Template;
 import dinkplugin.util.AccountTypeTracker;
 import dinkplugin.util.BlockingClientThread;
 import dinkplugin.util.BlockingExecutor;
+import dinkplugin.util.ClipManager;
 import dinkplugin.util.IndexedArray;
 import dinkplugin.util.TestImageUtil;
 import dinkplugin.util.Utils;
@@ -119,7 +120,10 @@ abstract class MockedNotifierTest extends MockedTestBase {
     protected SettingsManager settingsManager = Mockito.spy(new SettingsManager(gson, client, clientThread, plugin, config, configManager, httpClient));
 
     @Bind
-    protected DiscordMessageHandler messageHandler = Mockito.spy(new DiscordMessageHandler(gson, client, drawManager, httpClient, config, executor, clientThread, discordService, imageCapture));
+    protected ClipManager clipManager = Mockito.mock(ClipManager.class);
+
+    @Bind
+    protected DiscordMessageHandler messageHandler = Mockito.spy(new DiscordMessageHandler(gson, client, drawManager, httpClient, config, executor, clientThread, discordService, imageCapture, clipManager));
 
     @Override
     protected void setUp() {
